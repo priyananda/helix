@@ -9,7 +9,10 @@
 ;Loads gdt & idt table at GDT_ADDRESS
 ;
 [GLOBAL copy_gdt]
-copy_gdt:
+copy_gdt:		; called from C: preserve esi, edi, es
+	push esi
+	push edi
+	push es
 	;Set es to 0
 	xor ax,ax
 	mov es,ax
@@ -36,7 +39,10 @@ copy_gdt:
 	xor al,al
 	rep stosb
 
-	ret
+	pop es
+	pop edi
+	pop esi
+	retd
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 

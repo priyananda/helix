@@ -1,6 +1,6 @@
 %define VIDEO_SEG 0xb800
 [BITS 16]
-segment	_TEXT
+section	.text
 
 ;;;;;;;;;;;;;;;;;;;;;
 ; void show_gfx();
@@ -9,13 +9,17 @@ segment	_TEXT
 [EXTERN initk]
 [EXTERN next]
 
-show_gfx:
+show_gfx:		; called from C: preserve ebx, esi, edi, ebp, es
+	pushad
+	push es
 	call _draw_screen_message
 	call _show_funky_message
 	call _show_loading
 	push es
-	call initk
-	pop es 
+	push ds			; C code expects es == ds
+	pop es
+	call dword initk
+	pop es
 	mov [m_cluster] , ax
 .start:
 	call _play_with_progress
@@ -25,7 +29,9 @@ show_gfx:
 	mov al,02
 	mov bh,0x20
 	int 10h
-	ret
+	pop es
+	popad
+	retd
 
 ;;;;;;;;;;;;;;;;;;;;;
 ;	void draw_screen_message(void);
@@ -204,9 +210,12 @@ _play_with_progress:
 	push dx
 	push cx
 
-	push word [m_cluster]
-	call next
-	pop word [m_cluster]
+	push ds			; C code expects es == ds
+	pop es
+	movzx eax, word [m_cluster]
+	push eax
+	call dword next		; int next(int cluster)
+	add sp, 4
 	mov [m_cluster],ax
 
 	pop cx
@@ -243,14 +252,18 @@ _draw_progress:
 
 ; stores it in cpu_str
 [GLOBAL get_cpu]
-get_cpu:
+get_cpu:		; called from C: preserve ebx, esi
+	push ebx
+	push esi
 	mov si,cpu_str
 	xor eax,eax
 	cpuid
 	mov [si],ebx
 	mov [si+4],edx
 	mov [si+8],ecx
-	ret
+	pop esi
+	pop ebx
+	retd
 
 
 _show_loading:
@@ -263,10 +276,12 @@ _show_loading:
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; out : AX-DX contains mem size
+; unsigned long get_mem_size(void);
+; out : EAX contains mem size in KB
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 [GLOBAL get_mem_size]
-get_mem_size:
+get_mem_size:		; called from C: preserve ebx
+	push ebx
 	stc             ; I don't know why
     mov eax,0e801h  ; 'e' is just for fun
     xor ecx,ecx
@@ -282,10 +297,12 @@ get_mem_size:
 	mul bx
 	add ax,cx
 	adc dx,0
-	; the Result is in DX-AX . invert it for convenience
-	xchg ax,dx
-	; memory size now in AX-DX
-    ret
+	; the Result is in DX-AX, return it in EAX
+	shl edx,16
+	movzx eax,ax
+	or eax,edx
+	pop ebx
+	retd
 
 _put_string:
 	mov	bx,00

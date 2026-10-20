@@ -1,16 +1,25 @@
-asm(".code16\n");
 #include "boot1.h"
 unsigned char * convertString(int number,int base);
+
+/* Set 80x25 text mode (int 10h, ah=0, al=2) */
+static void set_text_mode(void){
+    __asm__ __volatile__(
+        "int $0x10\n"
+        :
+        : "a"(0x0002)
+        : "memory", "cc"
+    );
+}
 void boot_prompt();
 extern void jmp_in_dry_well();
 void outString(const char * str){
+	/* put_string takes the string in DS:SI */
 	__asm__ __volatile__(
-		"mov %0  , %%ax\n"
-		"mov %%ax, %%si\n"
+		"calll put_string\n"
+		: "+S" (str)
 		:
-		: "m" (str)
+		: "eax", "ebx", "memory", "cc"
 	);
-	put_string();
 }
 
 void puts(const char * str){
@@ -20,12 +29,10 @@ void puts(const char * str){
 
 void putch(char ch1){
 	__asm__ __volatile__(
-		"mov $0x0E, %%ah\n"
-		"xor %%bx , %%bx\n"
-		"movb %0  , %%al\n"
 		"int $0x10\n"
 		:
-		:"r"(ch1)
+		: "a"(0x0E00 | (unsigned char)ch1), "b"(0)
+		: "memory", "cc"
 	);
 }	
 void putchx(unsigned char chl){
@@ -35,28 +42,24 @@ void putchx(unsigned char chl){
 }
 
 int getch(void){
-	char chx;
+	unsigned short ax;
 	__asm__ __volatile__(
-		"xor %%ah, %%ah\n"
 		"int $0x16\n"
-		"mov %%al, %0\n"
-		: "=r"(chx)
-		: 
+		: "=a"(ax)
+		: "a"(0)
+		: "memory", "cc"
 	);
-	return chx;
+	return (char)ax;
 }
 
 void show_graphics(){
+    unsigned long mem;
     short low,high;
     boot_prompt();
     show_gfx();
-    get_mem_size();
-    __asm__ __volatile__(
-        "mov %%ax, %0\n"
-        "mov %%dx, %1\n"
-        : "=r"(high), "=r"(low)
-        : 
-    );
+    mem = get_mem_size();
+    high = (short)(mem >> 16);
+    low = (short)mem;
     puts     ("+---------------------------------------------------------------------+");
     puts     ("|              Entering 16 Bit Initialization Routine                 |");
     puts     ("+---------------------------------------------------------------------+");
@@ -80,13 +83,7 @@ void show_graphics(){
 }
 
 void error_msg(const char * message){
-    __asm__ __volatile__(
-        "xor %%ah , %%ah\n"
-	    "mov $0x02, %%al\n"
-    	"mov $0x20, %%bh\n"
-        "int $0x10\n"
-        :
-    );
+    set_text_mode();
 	puts(message);
 	puts("Press any key to reboot");
 	getch();
@@ -95,13 +92,7 @@ void error_msg(const char * message){
 
 void boot_prompt(){
     char x = 0;
-    __asm__ __volatile__(
-        "xor %%ah , %%ah\n"
-	    "mov $0x02, %%al\n"
-    	"mov $0x20, %%bh\n"
-        "int $0x10\n"
-        :
-    );
+    set_text_mode();
     puts("-----------------------------------------------------------------------------");
     puts("                             HILOW Helix Loader                              ");
     puts("-----------------------------------------------------------------------------");
@@ -110,18 +101,15 @@ void boot_prompt(){
     puts("      2 Boot into Other Operating system");
     x = getch();
     if (x == (char) '1')return;
+    /* Read the hard disk MBR to 0x7C0:0 and chain to it */
     __asm__ __volatile__(
-		"mov $0x7C0, %%ax\n"
-		"mov %%ax  , %%es\n"
-		"mov $0x2  , %%ah\n"
-		"mov $0x1  , %%al\n"
-		"xor %%bx  , %%bx\n"
-		"xor %%dh  , %%dh\n"
-		"mov $0x80 , %%dl\n"
-		"xor %%ch  , %%ch\n"
-		"mov $0x1  , %%cl\n"
+		"pushw %%es\n"
+		"mov %w0, %%es\n"
 		"int $0x13\n"
+		"popw %%es\n"
 		:
+		: "r"(0x7C0), "a"(0x0201), "b"(0), "c"(0x0001), "d"(0x0080)
+		: "memory", "cc"
 	);
     jmp_in_dry_well();
 }

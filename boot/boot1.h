@@ -3,7 +3,6 @@
 
 void copy_gdt();
 void switch_prot();
-void put_string();
 
 void outString(const char * str);
 void puts(const char * str);
@@ -15,7 +14,7 @@ void load_kernel();
 void show_gfx();
 void show_graphics();
 void dispint();
-void get_mem_size();
+unsigned long get_mem_size(); /* memory size in KB */
 void get_cpu();
 extern char cpu_str[13];
 void error_msg(const char * message);
