@@ -1,10 +1,13 @@
 [BITS 16]
 
-; group DGROUP .text .data .bss .stack
+; Calling convention: the C code is built with gcc -m16, which emits
+; 32-bit calls (4-byte return addresses, 4-byte stack arguments). Any
+; routine called from C must therefore return with "retd", and calls
+; into C (or into a routine shared with C) must use "call dword".
 
 extern main
 ; ****************************CODE-Segment*********************************
-segment	.text
+section	.text
 
 [GLOBAL start]
 [GLOBAL	put_string]
@@ -16,23 +19,23 @@ pmain:
 
 	;temp start
 	mov  si, tempmsg
-	call put_string
+	call dword put_string
 	; temp end
 
 	cli
 	xor ax,ax
 	mov ss, ax		; Stack segment  0x0000
-	mov ax, 0xA000
-	mov sp, ax	    ; Stack start is 0xA000
+	mov esp, 0xA000	    ; Stack start is 0xA000 (gcc -m16 code addresses via esp/ebp)
+	xor ebp, ebp
 	sti
 
-	call main		; C code main
+	call dword main		; C code main
 	
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;	Prints a null terminated string in DS:SI
 ;
 [GLOBAL	put_string]
-put_string:
+put_string:		; called from C: clobbers eax, ebx, esi
 	mov	bx, 7
 	mov	ah,0eh
 .do:
@@ -43,7 +46,7 @@ put_string:
 	int	10h
 	jmp	.do
 .done:
-	ret
+	retd
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;Control never comes here
@@ -54,10 +57,7 @@ put_string:
 %include "gdt.asm"	; The Tables and other stuff related to GDT
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Data-Segment;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-segment	.data
+section	.data
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Bss-Segment;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-segment	.bss
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;Stack-Segment;;;;;;;;;;;;;;;;;;;;;;;;;;;
-segment	.stack
+section	.bss

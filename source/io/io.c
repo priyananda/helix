@@ -36,7 +36,7 @@ u16 inw(port_no port){
 }
 
 void outl (port_no port, u32 data){
-	__asm__ __volatile__ ("outb %1, %0"
+	__asm__ __volatile__ ("outl %1, %0"
 		:
 		: "d" (port), "a" (data)
 	);

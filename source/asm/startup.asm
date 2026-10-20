@@ -7,7 +7,7 @@
 %define KERNEL_STACK_START 0x9A000	; 64K + 500K
 
 
-[SECTION .text text]
+section .text
 [BITS 32]
 [EXTERN main]
 [EXTERN set_idtr]
@@ -39,12 +39,12 @@ int13h:
 	mov ebx,real_jmp - 0x10000
 	jmp REAL_CODE_SEL:prot16 - 0x10000
 prot16:
-	%include "prot16.bin"
+	incbin "prot16.bin"
 real_jmp:
 	dw 0
 	dw 0x1000
 real_code:
-	%include "real.bin"
+	incbin "real.bin"
 	dd fin_i13h
 	dw KERNEL_CODE_SEL
 fin_i13h:
@@ -60,7 +60,7 @@ fin_i13h:
 	pop eax
 	ret
 
-[SECTION .data data]
+section .data
 ridtr:
 	dw 0x3ff
 	dd 0x0

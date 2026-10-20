@@ -1,6 +1,6 @@
 
 
-[SECTION .text text]
+section .text
 [BITS 32]
 [EXTERN kb_int_handler]
 

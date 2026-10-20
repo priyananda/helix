@@ -1,5 +1,6 @@
-asm(".code16\n");
 #include "fat12.h"
+
+void error_msg(const char * message);
 
 #define KERNEL_FILE "KERNEL  BIN"
 
@@ -20,12 +21,10 @@ static u16 curr_off;
 
 uint init(){
 	__asm__ __volatile__ (
-		"xor %%ax, %%ax\n"
-		"xor %%dl, %%dl\n"
 		"int $0x13\n"
-		"mov %%ax, %0\n"
-		: "=r"(error)
-		: 
+		: "=a"(error)
+		: "a"(0), "d"(0)
+		: "memory", "cc"
 	);
 	error >>= 8;
 	return error;
@@ -39,20 +38,16 @@ uint read(uint linear){
 	if(error)return error;
 
 	lin2hts(linear,h,t,s);
+	/* int 13h, ah=2: read one sector into curr_seg:curr_off */
 	__asm__ __volatile__ (
-		"mov %1  , %%ax\n"
-		"mov %%ax, %%es\n"
-		"mov $0x2, %%ah\n"
-		"mov $0x1, %%al\n"
-		"mov %2  , %%bx\n"
-		"mov %3  , %%dh\n"
-		"mov $0x0, %%dl\n"
-		"mov %4  , %%ch\n"
-		"mov %5  , %%cl\n"
+		"pushw %%es\n"
+		"mov %w1, %%es\n"
 		"int $0x13\n"
-		"mov %%ax, %0\n"
-		: "=q"(error)
-		: "r"(curr_seg), "r" (curr_off), "r"(h), "q"(t), "q"(s)
+		"popw %%es\n"
+		: "=a"(error)
+		: "r"(curr_seg), "a"(0x0201), "b"(curr_off),
+		  "c"((t << 8) | s), "d"(h << 8)
+		: "memory", "cc"
 	);
 	error >>= 8;
 	return error;

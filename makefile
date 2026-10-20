@@ -1,72 +1,95 @@
+CC=gcc
+LD=ld
+AR=ar
+NASM=nasm
+OBJCOPY=objcopy
 LDSCRIPT=kernel.ld
-CFLAGS=-nostdinc -fno-builtin -m32 -fno-stack-protector
-LDFLAGS=-T$(LDSCRIPT) -m elf_i386 --verbose 
+CFLAGS=-std=gnu89 -m32 -march=i386 -ffreestanding -nostdinc -fno-builtin \
+	-fno-stack-protector -fno-pic -fno-pie -fno-asynchronous-unwind-tables \
+	-fno-unwind-tables -fcf-protection=none -mno-sse -mno-mmx
+LDFLAGS=-T$(LDSCRIPT) -m elf_i386 -z noexecstack --no-warn-rwx-segments
 INCDIR=include
-AFLAGS=-f coff -i$(INCDIR) -isource/asm/
-DEL=rm -f
+AFLAGS=-f elf32 -i$(INCDIR)/ -isource/asm/
 BUILDDIR=build
 BUILDDIRINT=build/int
 BUILDDIRIO=build/io
 BUILDDIRKLIB=build/klib
+OUTDIR=output
 
-all: output/kernel.bin output/boot0.bin output/boot1.bin
+export CC AR CFLAGS
 
-output/kernel.bin : $(BUILDDIR)/kernel.out
-	objcopy --output-target=binary $(BUILDDIR)/kernel.out output/kernel.bin
+KLIB_OBJS=$(addprefix $(BUILDDIRKLIB)/,atoi.o ctype.o key.o printf.o string.o)
+IO_OBJS=$(addprefix $(BUILDDIRIO)/,io.o video.o pic.o keymap.o keyboard.o floppy.o ports.o)
+INT_OBJS=$(addprefix $(BUILDDIRINT)/,intrfun.o intrutil.o)
 
-$(BUILDDIR)/kernel.out : $(BUILDDIR)/main.o $(BUILDDIR)/startup.o $(BUILDDIR)/keyb.o $(BUILDDIR)/fs.a $(BUILDDIR)/io.a $(BUILDDIR)/int.a $(BUILDDIR)/klib.a
-	ld $(LDFLAGS) -o $@ $?
+# startup.o must come first: boot1 jumps to the start of the kernel image
+# at 0x10000, and the real-mode int 13h trampoline in startup.asm must sit
+# within the first 64K of the image.
+KERNEL_OBJS=$(BUILDDIR)/startup.o $(BUILDDIR)/main.o $(BUILDDIR)/keyb.o
+KERNEL_LIBS=$(BUILDDIR)/fs.a $(BUILDDIR)/io.a $(BUILDDIR)/int.a $(BUILDDIR)/klib.a
 
-$(BUILDDIR)/klib.a : $(BUILDDIRKLIB)/atoi.o $(BUILDDIRKLIB)/ctype.o $(BUILDDIRKLIB)/key.o $(BUILDDIRKLIB)/printf.o $(BUILDDIRKLIB)/string.o
-	ar cr $@ $?
+all: $(OUTDIR)/kernel.bin $(OUTDIR)/boot0.bin $(OUTDIR)/boot1.bin
 
-$(BUILDDIR)/io.a : $(BUILDDIRIO)/io.o $(BUILDDIRIO)/video.o $(BUILDDIRIO)/pic.o $(BUILDDIRIO)/keymap.o $(BUILDDIRIO)/keyboard.o $(BUILDDIRIO)/floppy.o $(BUILDDIRIO)/ports.o
-	ar cr $@ $?
+# Bootable 1.44MB floppy image (no root needed)
+image: $(OUTDIR)/floppy.img
 
-$(BUILDDIR)/int.a : $(BUILDDIRINT)/intrfun.o $(BUILDDIRINT)/intrutil.o
-	ar cr $@ $?
+$(OUTDIR)/floppy.img : $(OUTDIR)/boot0.bin $(OUTDIR)/boot1.bin $(OUTDIR)/kernel.bin tools/mkfloppy.py
+	python3 tools/mkfloppy.py $@ $(OUTDIR)/boot0.bin $(OUTDIR)/boot1.bin $(OUTDIR)/kernel.bin
 
+run: $(OUTDIR)/floppy.img
+	qemu-system-i386 -drive file=$<,format=raw,if=floppy -boot a
+
+$(OUTDIR)/kernel.bin : $(BUILDDIR)/kernel.out | $(OUTDIR)
+	$(OBJCOPY) --output-target=binary $< $@
+
+# The libraries reference each other (e.g. fs uses klib and io), so group them.
+$(BUILDDIR)/kernel.out : $(KERNEL_OBJS) $(KERNEL_LIBS) $(LDSCRIPT)
+	$(LD) $(LDFLAGS) -o $@ $(KERNEL_OBJS) --start-group $(KERNEL_LIBS) --end-group
+
+$(BUILDDIR)/klib.a : $(KLIB_OBJS)
+	rm -f $@ && $(AR) cr $@ $^
+
+$(BUILDDIR)/io.a : $(IO_OBJS)
+	rm -f $@ && $(AR) cr $@ $^
+
+$(BUILDDIR)/int.a : $(INT_OBJS)
+	rm -f $@ && $(AR) cr $@ $^
+
+$(BUILDDIR)/fs.a : FORCE
+	$(MAKE) -C source/fs
+
+# real.asm and prot16.asm are flat 16-bit blobs that startup.asm pulls in
+# with incbin.
 $(BUILDDIR)/startup.o : source/asm/startup.asm $(BUILDDIR)/real.bin $(BUILDDIR)/prot16.bin
-	nasm $(AFLAGS) -i$(BUILDDIR)/ -o$@ $<
+	$(NASM) $(AFLAGS) -i$(BUILDDIR)/ -o $@ $<
 
-$(BUILDDIR)/real.bin : source/asm/real.asm
-	nasm  -o$(BUILDDIR)/real.out source/asm/real.asm
-	tools/bin.exe $(BUILDDIR)/real.out $(BUILDDIR)/real.bin
+$(BUILDDIR)/%.bin : source/asm/%.asm | $(BUILDDIR)
+	$(NASM) -f bin -o $@ $<
 
-$(BUILDDIR)/prot16.bin : source/asm/prot16.asm
-	nasm  -o$(BUILDDIR)/prot16.out source/asm/prot16.asm
-	tools/bin.exe $(BUILDDIR)/prot16.out $(BUILDDIR)/prot16.bin
+$(BUILDDIR)/keyb.o : source/asm/keyb.asm | $(BUILDDIR)
+	$(NASM) $(AFLAGS) -o $@ $<
 
-$(BUILDDIR)/keyb.o : source/asm/keyb.asm
-	nasm $(AFLAGS) -o$@ $<
-	
-$(BUILDDIR)/fs.a :
-	make -C source/fs
+$(OUTDIR)/boot0.bin $(OUTDIR)/boot1.bin : FORCE
+	$(MAKE) -C boot
 
-output/boot0.bin : output/boot1.bin
+$(BUILDDIRINT)/%.o : source/int/%.c | $(BUILDDIRINT)
+	$(CC) $(CFLAGS) -I$(INCDIR) -c -o $@ $<
 
-output/boot1.bin :
-	make -C boot
+$(BUILDDIRIO)/%.o : source/io/%.c | $(BUILDDIRIO)
+	$(CC) $(CFLAGS) -I$(INCDIR) -c -o $@ $<
 
-clean ::
-	$(DEL) output/*.*
-	$(DEL) $(BUILDDIR)/*.*
-	$(DEL) $(BUILDDIRIO)/*.o
-	$(DEL) $(BUILDDIRKLIB)/*.o
-	$(DEL) $(BUILDDIRINT)/*.o
-	$(DEL) $(BUILDDIR)/fs/*.o
+$(BUILDDIRKLIB)/%.o : source/klib/%.c | $(BUILDDIRKLIB)
+	$(CC) $(CFLAGS) -I$(INCDIR) -c -o $@ $<
 
-$(BUILDDIRINT)/%.o : source/int/%.c
-	gcc $(CFLAGS) -I$(INCDIR) -c -o$@ $<
+$(BUILDDIR)/%.o : source/%.c | $(BUILDDIR)
+	$(CC) $(CFLAGS) -I$(INCDIR) -c -o $@ $<
 
-$(BUILDDIRIO)/%.o : source/io/%.c
-	gcc $(CFLAGS) -I$(INCDIR) -c -o$@ $<
+$(BUILDDIR) $(BUILDDIRINT) $(BUILDDIRIO) $(BUILDDIRKLIB) $(OUTDIR):
+	mkdir -p $@
 
-$(BUILDDIRKLIB)/%.o : source/klib/%.c
-	gcc $(CFLAGS) -I$(INCDIR) -c -o$@ $<
+clean:
+	rm -rf $(BUILDDIR) $(OUTDIR)
 
-$(BUILDDIR)/%.o : source/%.c
-	gcc $(CFLAGS) -I$(INCDIR) -c -o$@ $<
+FORCE:
 
-.asm.o:
-	nasm $(AFLAGS) -o$@ $<
+.PHONY: all image run clean FORCE
